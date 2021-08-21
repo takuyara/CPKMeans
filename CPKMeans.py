@@ -1,34 +1,9 @@
 # Pionniers du TJ, benissiez-moi par votre Esprits Saints!
 import numpy as np
-
-class DisjointSet:
-	def __init__(self, num_points):
-		self.fa = []
-		for __ in range(num_points):
-			self.fa.append(-1)
-	def get(self, x):
-		rt = x
-		while self.fa[rt] != -1:
-			rt = self.fa[rt]
-		while x != rt:
-			x1 = self.fa[x]
-			self.fa[x] = rt
-			x = x1
-		return rt
-	def merge(self, x, y):
-		self.fa[self.get(x)] = self.get(y)
-	def get_sizes(self):
-		sz = {}
-		for i in range(len(self.fa)):
-			j = self.get(i)
-			if j not in sz:
-				sz[j] = []
-			sz[j].append(i)
-		res = []
-		for idx, sz in sz.items():
-			res.append((idx, sz))
-		res.sort(key = lambda x: len(x[1]), reverse = True)
-		return res
+from disjoint import DisjointSet
+from sklearn.metrics.cluster import normalized_mutual_info_score as NMI
+import warnings
+warnings.filterwarnings(action = "ignore", category = FutureWarning)
 
 class CPKMeans:
 	"""
@@ -43,23 +18,23 @@ class CPKMeans:
 		self.points = points
 		self.num_clust = num_clust
 		self.penalty = W
-		self.dset = DisjointSet(len(num_points))
+		self.dset = DisjointSet(points.shape[0])
+		num_points = points.shape[0]
+
 		for i, j in must_link:
 			self.dset.merge(i, j)
-		self.clust_idx = []
-		for i in range(self.points.shape[0]):
-			self.clust_idx.append(None)
+		self.clust_idx = [None for __ in range(num_points)]
 
 		# Init sets
 		sizes = self.dset.get_sizes()
-		self.cannot_link = [{} for __ in range(len(sizes))]
+		self.cannot_link = [{} for __ in range(num_points)]
 		for i, j in cannot_link:
 			i = self.dset.get(i)
 			j = self.dset.get(j)
 			self.cannot_link[i][j] = True
 			self.cannot_link[j][i] = True
 
-		self.neighbour_size = [0 for __ in range(len(sizes))]
+		self.neighbour_size = [0 for __ in range(num_points)]
 		for idx, curclust in sizes:
 			self.neighbour_size[idx] = len(curclust)
 
@@ -71,6 +46,7 @@ class CPKMeans:
 
 		self.clust = []
 		self.centre = []
+
 		if num_sets >= num_clust:
 			for idx, curclust in sizes[ : num_clust]:
 				self.insert_clust(idx, curclust)
@@ -101,6 +77,7 @@ class CPKMeans:
 				curpt = global_mean + perturbation
 				self.clust.append({})
 				self.centre.append(curpt)
+	
 			for i in waiting_list:
 				self.assign_clust(i)
 
@@ -118,7 +95,7 @@ class CPKMeans:
 		min_dist = 1e100
 		for i, clust in enumerate(self.clust):
 			curd = np.linalg.norm(self.points[x] - self.centre[i])
-			curd += self.penalty * (must_link_size - clust.get(xrt, default = 0))
+			curd += self.penalty * (must_link_size - clust.get(xrt, 0))
 			for idx, size in clust.items():
 				if idx in self.cannot_link[xrt]:
 					curd += self.penalty * size
@@ -134,21 +111,24 @@ class CPKMeans:
 			self.clust[j][rt] = 0
 		self.clust[j][rt] += 1
 
-	def __call__(iteration_times = 100):
-		for __ in range(iteration_times):
+	def __call__(self, ground_truth = None, num_iteration = 100):
+		for T in range(num_iteration):
 			for i in range(self.points.shape[0]):
 				self.clust_idx[i] = self.compute_nearest_clust(i)
-			for i in range(self.num_clust):
-				self.clust[i] = {}
+			self.clust = [{} for i in range(self.num_clust)]
 			tmp_clust = {}
 			for i in range(self.points.shape[0]):
 				j = self.dset.get(i)
 				rt = self.clust_idx[i]
 				if j not in self.clust[rt]:
-					self.clust[rt] = 0
-				self.clust[rt] += 1
+					self.clust[rt][j] = 0
+				self.clust[rt][j] += 1
 				if rt not in tmp_clust:
 					tmp_clust[rt] = []
 				tmp_clust[rt].append(i)
 			for i, clust_ids in enumerate(tmp_clust):
-				self.centre[i] = compute_centre(clust_ids)
+				self.centre[i] = self.compute_centre(clust_ids)
+			if ground_truth is not None:
+				this_nmi = NMI(self.clust_idx, ground_truth)
+				print("Iteration: {}, NMI = {}".format(T, this_nmi))
+		return self.clust_idx
